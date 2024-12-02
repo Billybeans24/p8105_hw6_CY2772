@@ -12,7 +12,7 @@ library(ggplot2)
 library(forcats) 
 ```
 
-#Problem 2
+# Problem 2
 ## 2a) Data cleaning
 ```{r}
 
@@ -39,22 +39,21 @@ homicide = homicide %>%
 
 
 ```
-## Define the Logistic Regression Function
+## 2b1) Define the Logistic Regression Function
 ```{r}
 # Define the Logistic Regression Function
 fit_logistic_regression <- function(data) {
-  # Fit the logistic regression model
-  model <- glm(
+  model = glm(
     solved_bin ~ victim_age + victim_race + victim_sex,
     family = binomial(),
     data = data
   )
   
   # Tidy the model output with exponentiated estimates and confidence intervals
-  tidy_model <- tidy(model, exponentiate = TRUE, conf.int = TRUE)
+  tidy_model = tidy(model, exponentiate = TRUE, conf.int = TRUE)
   
   # Extract the row corresponding to 'victim_sexMale'
-  sex_term <- tidy_model %>%
+  sex_term = tidy_model %>%
     filter(term == "victim_sexMale")
   
   # Check if 'victim_sexMale' exists in the model
@@ -66,7 +65,7 @@ fit_logistic_regression <- function(data) {
         conf_upper_95 = conf.high
       )
   } else {
-    # If the term is missing (e.g., due to lack of variation), return NA values
+   
     result <- tibble(
       odds_ratio = NA_real_,
       conf_lower_95 = NA_real_,
@@ -173,7 +172,7 @@ ggplot(homicide_stat, aes(x = city_state, y = 	Log_OR, color = city_state)) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red")  # Reference line at OR = 1
 
 ```
-
+The plot illustrates how gender influences homicide resolution across different cities. An odds ratio (OR) above 1 means cases with male victims are more likely to be solved than those with female victims. Cities like Albuquerque, NM, and Stockton, CA, have wide confidence intervals (CIs), indicating uncertainty due to smaller sample sizes. When a CI does not include 1, the effect is statistically significant. Conversely, cities with CIs that cross 1, such as Atlanta, GA, show no significant gender-based difference in resolution likelihood
 
 
 
