@@ -2,29 +2,179 @@
 title: "p8105_hw6_CY2772"
 author: "Chenhui Yan"
 date: "2024-12-02"
-output: html_document
+output: github_document
 ---
-
-```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE)
+```{r}
+library(dplyr)
+library(tidyverse)
+library(broom)
+library(ggplot2)
+library(forcats) 
 ```
 
-## R Markdown
+#Problem 2
+## 2a) Data cleaning
+```{r}
 
-This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+homicide = read_csv("./homicide-data.csv") %>%
+  # Replace "Unknown" with NA in victim_age
+  mutate(victim_age = na_if(victim_age, "Unknown")) %>%
+  # Unite city and state
+  unite(col = "city_state", city, state, sep = ", ", remove = TRUE) %>%
+  # Continue with data cleaning
+  mutate(
+    solved_bin = if_else(disposition == "Closed by arrest", 1, 0),
+    victim_age = parse_number(victim_age),
+    victim_race = factor(victim_race, levels = c("White", "Black")),
+    victim_sex = factor(victim_sex)
+  ) %>%
+  # Apply filters
+  filter(
+    !city_state %in% c("Dallas, TX", "Phoenix, AZ", "Kansas City, MO", "Tulsa, AL"),
+    victim_race %in% c("White", "Black")
+  )
 
-When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+homicide = homicide %>%
+  filter(!is.na(victim_age))
 
-```{r cars}
-summary(cars)
+
+```
+## Define the Logistic Regression Function
+```{r}
+# Define the Logistic Regression Function
+fit_logistic_regression <- function(data) {
+  # Fit the logistic regression model
+  model <- glm(
+    solved_bin ~ victim_age + victim_race + victim_sex,
+    family = binomial(),
+    data = data
+  )
+  
+  # Tidy the model output with exponentiated estimates and confidence intervals
+  tidy_model <- tidy(model, exponentiate = TRUE, conf.int = TRUE)
+  
+  # Extract the row corresponding to 'victim_sexMale'
+  sex_term <- tidy_model %>%
+    filter(term == "victim_sexMale")
+  
+  # Check if 'victim_sexMale' exists in the model
+  if (nrow(sex_term) == 1) {
+    result <- sex_term %>%
+      select(
+        odds_ratio = estimate,
+        conf_lower_95 = conf.low,
+        conf_upper_95 = conf.high
+      )
+  } else {
+    # If the term is missing (e.g., due to lack of variation), return NA values
+    result <- tibble(
+      odds_ratio = NA_real_,
+      conf_lower_95 = NA_real_,
+      conf_upper_95 = NA_real_
+    )
+  }
+  
+  return(result)
+}
+
 ```
 
-## Including Plots
+## 2b) Glm for Baltimore, MD
+```{r}
+baltimore = homicide %>%
+  filter(city_state == "Baltimore, MD") %>%
+  mutate(
+    victim_age = as.numeric(victim_age),
+    victim_race = factor(victim_race),
+    victim_sex = factor(victim_sex)
+  )
 
-You can also embed plots, for example:
+# Fit the logistic regression model
+baltimore_glm <- glm(
+  solved_bin ~ victim_age + victim_race + victim_sex,
+  data = baltimore,
+  family = binomial()
+)
 
-```{r pressure, echo=FALSE}
-plot(pressure)
+# Get tidy results with exponentiated estimates and confidence intervals
+baltimore_results <- tidy(
+  baltimore_glm,
+  exponentiate = TRUE,
+  conf.int = TRUE
+) %>%
+  filter(term == "victim_sexMale") %>%
+  select(
+    term,
+    odds_ratio = estimate,
+    conf_lower_95 = conf.low,
+    conf_upper_95 = conf.high
+  )
+
+# Display the results
+print(baltimore_results)
+
+```
+## 2C) Apply for every city
+```{r}
+# Apply the Logistic Regression Function Across Cities
+city_or_results <- homicide %>%
+  group_by(city_state) %>%
+  nest() %>%
+  mutate(
+    glm_results = map(data, fit_logistic_regression)
+  ) %>%
+  unnest(cols = glm_results) %>%
+  select(city_state, odds_ratio, conf_lower_95, conf_upper_95)
+
+# Clean and Prepare the Final Statistics
+homicide_stat <- city_or_results %>%
+  mutate(
+    city_state = as.factor(city_state)
+  ) %>%
+  rename(
+    "Log_OR" = "odds_ratio",
+    "CI_Lower_95" = "conf_lower_95",
+    "CI_Upper_95" = "conf_upper_95"
+  ) %>%
+  drop_na(Log_OR, CI_Lower_95, CI_Upper_95)  # Optional: Remove rows with NA values
+
+# Display the Results as a Neatly Formatted Table
+knitr::kable(homicide_stat, 
+             caption = "Adjusted Odds Ratios for Solving Homicides by Victim Sex Across Cities",
+             digits = 3)
+```
+## 2d) Plot the result
+```{r}
+# Reorder 'city_state' based on Log_OR for better visualization
+homicide_stat <- homicide_stat %>%
+  mutate(
+    city_state = fct_reorder(city_state, 	Log_OR)
+  )
+
+# Create the Plot
+ggplot(homicide_stat, aes(x = city_state, y = 	Log_OR, color = city_state)) +
+  geom_point(size = 3) +  # Increase point size for better visibility
+  geom_errorbar(aes(ymin = CI_Lower_95	, ymax = CI_Upper_95), width = 0.2) +
+  coord_flip() +  # Flip coordinates for horizontal alignment
+  labs(
+    title = "Adjusted Odds Ratios for Solving Homicides by City",
+    subtitle = "Comparing Male vs Female Victims",
+    x = "City",
+    y = "Odds Ratio (Male vs Female Victims)"
+  ) +
+  theme_minimal() +
+  theme(
+    legend.position = "none",                   
+    plot.title = element_text(size = 16, face = "bold", hjust = 0.5),
+    plot.subtitle = element_text(size = 12, hjust = 0.5),
+    axis.text = element_text(size = 10),
+    axis.title = element_text(size = 12)
+  ) +
+  geom_hline(yintercept = 1, linetype = "dashed", color = "red")  # Reference line at OR = 1
+
 ```
 
-Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+
+
