@@ -4,12 +4,15 @@ author: "Chenhui Yan"
 date: "2024-12-02"
 output: github_document
 ---
+
 ```{r}
 library(dplyr)
 library(tidyverse)
 library(broom)
 library(ggplot2)
 library(forcats) 
+library(rsample) 
+library(modelr)
 ```
 
 # Problem 2
@@ -172,8 +175,132 @@ ggplot(homicide_stat, aes(x = city_state, y = 	Log_OR, color = city_state)) +
   geom_hline(yintercept = 1, linetype = "dashed", color = "red")  # Reference line at OR = 1
 
 ```
+
 The plot illustrates how gender influences homicide resolution across different cities. An odds ratio (OR) above 1 means cases with male victims are more likely to be solved than those with female victims. Cities like Albuquerque, NM, and Stockton, CA, have wide confidence intervals (CIs), indicating uncertainty due to smaller sample sizes. When a CI does not include 1, the effect is statistically significant. Conversely, cities with CIs that cross 1, such as Atlanta, GA, show no significant gender-based difference in resolution likelihood
 
+# Problem 3
+## 1a) data cleaning
+```{r}
+birth_data = read_csv("./birthweight.csv")
+str(birth_data)
+birth_data = birth_data %>% 
+  mutate(
+    babysex = factor(babysex, levels = c(1, 2), labels = c("Male", "Female")),
+    frace = factor(frace),
+    mrace = factor(mrace),
+    malform = factor(malform)
+  ) %>% 
+  drop_na()
+summary(birth_data)
+```
+## 2) Propose and Fit a Regression Model for Birthweight
+```{r}
+# Fit the initial regression model
+model_initial = lm(bwt ~ gaweeks + ppbmi + smoken + malform + babysex + frace + mrace + momage + wtgain, 
+                    data = birth_data)
 
+# Summarize the model
+summary(model_initial)
 
+```
+```{r}
+# Add predictions and residuals to the dataset
+birthweight = birth_data %>%
+  add_predictions(model_initial, var = "pred") %>%
+  add_residuals(model_initial, var = "resid")
 
+# Plot residuals vs. fitted values
+ggplot(birthweight, aes(x = pred, y = resid)) +
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  labs(
+    title = "Residuals vs. Fitted Values",
+    x = "Fitted Values (Predicted Birthweight)",
+    y = "Residuals"
+  )
+
+```
+
+## 3a) Compare the Model to Two Others
+```{r}
+# Model 1: Using length at birth and gestational age as predictors (main effects only).
+model1 <- lm(bwt ~ blength + gaweeks, data = birthweight)
+# Model 2: Using head circumference, length, sex, and all interactions (including the three-way interaction).
+model2 <- lm(bwt ~ bhead * blength * babysex, data = birthweight)
+
+```
+## 3b) Set Up Cross-Validation
+```{r}
+# Set seed for reproducibility
+set.seed(123)
+
+# Generate Monte Carlo cross-validation splits
+cv_splits = mc_cv(birthweight, times = 10, prop = 0.8)
+# Function to compute RMSE for a given model and test data
+compute_rmse = function(model, test_data) {
+  predictions = predict(model, newdata = test_data)
+  sqrt(mean((test_data$bwt - predictions)^2))
+}
+# Function to fit models and compute RMSEs for one split
+compute_rmse_split = function(split) {
+  train_data = analysis(split)
+  test_data = assessment(split)
+  
+  # Fit models on training data
+  model_custom_cv = lm(bwt ~ gaweeks + babysex + momage + wtgain + smoken +
+                          parity + malform + ppbmi, data = train_data)
+  model1_cv = lm(bwt ~ blength + gaweeks, data = train_data)
+  model2_cv = lm(bwt ~ bhead * blength * babysex, data = train_data)
+  
+  # Compute RMSEs on test data
+  tibble(
+    rmse_custom = compute_rmse(model_custom_cv, test_data),
+    rmse_model1 = compute_rmse(model1_cv, test_data),
+    rmse_model2 = compute_rmse(model2_cv, test_data)
+  )
+}
+# Apply the function to all splits and collect RMSEs
+rmse_results = cv_splits %>%
+  mutate(rmse = map(splits, compute_rmse_split)) %>%
+  unnest(rmse)
+# Calculate mean RMSEs for each model
+rmse_summary <- rmse_results %>%
+  summarise(
+    mean_rmse_custom = mean(rmse_custom),
+    mean_rmse_model1 = mean(rmse_model1),
+    mean_rmse_model2 = mean(rmse_model2)
+  )
+
+print(rmse_summary)
+
+```
+
+```{r}
+rmse_long = rmse_results %>%
+  pivot_longer(
+    cols = starts_with("rmse_"),
+    names_to = "model",
+    values_to = "rmse"
+  )
+# Violin plot for RMSE distribution
+ggplot(rmse_long, aes(x = model, y = rmse)) +
+  geom_violin() +
+  labs(
+    title = "Model Comparison via RMSE",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  theme_minimal()
+# Plot RMSE distributions for each model
+ggplot(rmse_long, aes(x = model, y = rmse)) +
+  geom_boxplot() +
+  labs(
+    title = "Cross-Validated RMSE for Different Models",
+    x = "Model",
+    y = "RMSE"
+  ) +
+  scale_x_discrete(labels = c("Custom Model", "Model 1", "Model 2"))
+
+```
+
+As a result, the model using head circumference, length, sex, and all interactions (including the three-way interaction) between these variables is optimal.
